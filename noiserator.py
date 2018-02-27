@@ -14,15 +14,15 @@ class FakeData:
         self.amplitude = amp
         self.phase = phase
         
-    def generate(self, time=30, srate=2048):
+    def generate(self, time=30, s_rate=2048):
         rads_per_sec = self.frequency * 2 * np.pi
         for i in (x + self.phase \
-                  for x in np.arange(0, rads_per_sec * time, rads_per_sec / srate)):
+                  for x in np.arange(0, rads_per_sec * time, rads_per_sec / s_rate)):
             yield np.sin(i) + np.random.normal()
 
 def __test():
     data = FakeData(freq=2, phase = np.pi)
-    y = [y for y in data.generate(time=1, srate=512)]
+    y = [y for y in data.generate(time=1, s_rate=512)]
     rads_per_sec = data.frequency * 2 * np.pi
     x = [x for x in np.arange(0, rads_per_sec * 1, rads_per_sec / 512)]
     plt.plot(x,y)
