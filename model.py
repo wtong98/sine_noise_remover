@@ -17,20 +17,35 @@ data = FakeData(freq=60,
 time = 30
 s_rate = 2048
 
-def train_input_fn(batch_size=None):
+# TODO wrap configurables in argparse
+def _draw_data(batch_size=50, samples=200): # samples may or may not be useless
     global data
     
     dataset = tf.data.Dataset.from_generator(
-        lambda: data.generate(time, s_rate), tf.float32)
+        lambda: data.generate(sets=samples, time=time, s_rate=s_rate), tf.float32)  
+    dataset = dataset.repeat().batch(batch_size)
     
-    size = time * s_rate if batch_size is None else batch_size
-    dataset = dataset.repeat().batch(size)
-    
-    return (dataset.make_one_shot_iterator().get_next(),
-            tf.constant((data.frequency, data.amplitude, data.phase)))
+    return dataset.make_one_shot_iterator().get_next()
 
 
-def conv_model_fn(features, labels, mode):
+def _build_model(conv_layers=3, dense_layers=2):
+    global time, s_rate
+    
+    input = tf.placeholder_with_default(input=_draw_data(batch_size=5, 
+                                                         samples=15), 
+                                        shape=tf.TensorShape([None, time * s_rate]))
+    # input_layer = tf.reshape(tensor, shape, name)
+    # return loss + optimizer
+
+def __conv_layer(input, current_layer):
+    if current_layer == 1:
+        input_layer = input
+    else:
+        input_layer = __conv_layer(input, current_layer - 1)
+    
+    # define conv + pool, figure out proper scaling
+
+def __dense_layer(input, current_layer):
     pass
 
 
@@ -38,18 +53,21 @@ def conv_model_fn(features, labels, mode):
 
 
 def __test():    
-    val = train_input_fn()
+    val = _draw_data(batch_size=3, samples=3)
     with tf.Session() as sess:
         out = sess.run(val)
         out2 = sess.run(val)
+        print(out)
+        print(out2)
     
     print('the plot thickens')
     plt.plot(out[0])
     plt.plot(out2[0])
     plt.show()
+    print('done')
     
 if __name__ == "__main__":
-    __test()
+    _build_model()
 
     
     
