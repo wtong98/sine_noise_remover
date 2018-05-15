@@ -15,20 +15,20 @@ class FakeData:
         self.phase = phase
         self.mean = mean
         self.sigma = sigma
-        
-    def generate(self, sets=1, time=30, s_rate=2048):
-        for _ in range(sets):
-            dataset = self.__generate_waveform(time, s_rate)
-            yield dataset
     
-    def __generate_waveform(self, time, s_rate):
+    def generator(self, time=30, s_rate=2048):
+        while True:
+            yield self.generate_waveform(time, s_rate)
+    
+    def generate_waveform(self, time=30, s_rate=2048):
         x = np.linspace(start=0, 
                         stop=2 * np.pi * time, 
                         num=s_rate * time, 
-                        endpoint=False) + self.phase
+                        endpoint=True) + self.phase
         waveform = self.amplitude \
                     * np.sin(x * self.frequency) \
                     + np.random.normal(loc=self.mean, scale=self.sigma, size=len(x))
+        waveform = np.expand_dims(waveform, axis=-1)
         return waveform
 
 
