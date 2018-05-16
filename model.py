@@ -34,56 +34,71 @@ def _draw_data(batch_size=50):
     
     return dataset.make_one_shot_iterator().get_next()
 
-
-def _build_model(conv_layers=3, dense_layers=2):
+def _build_inputs():
     global time, s_rate
     
     inputs = tf.placeholder_with_default(input=_draw_data(batch_size=batch_size), 
                                         shape=tf.TensorShape([None, time * s_rate, 1]))
-    
-    conv = __conv_layer(inputs, conv_layers)
-    conv_flat = tf.contrib.layers.flatten(conv)
-    dense = __dense_layer(conv_flat, dense_layers)
+    return inputs
+
+
+def _build_branch_model(inputs, branch_layers=3, dense_layers=2):
+    branch = __branch_layer(inputs, branch_layers)
+    branch_flat = tf.contrib.layers.flatten(branch)
+    dense = __dense_layer(branch_flat, dense_layers)
     params = tf.layers.dense(inputs=dense, units=3)
 
-    '''
+    return params
+
+def __branch_layer(inputs, 
+                 current_layer, 
+                 start_size=16,
+                 scale_rate=2, 
+                 kernel_sizes=[8, 16, 32], 
+                 strides=2):
+    if current_layer == 1:
+        input_layer = inputs
+    else:
+        input_layer = __branch_layer(inputs, current_layer - 1)
+        
+    branches = [tf.layers.conv1d(
+                    inputs=input_layer,
+                    filters=start_size * scale_rate * current_layer,
+                    kernel_size=ksize,
+                    strides=strides,
+                    padding='same',
+                    activation=tf.nn.relu) for ksize in kernel_sizes]
+    branch_layer = tf.concat(values=branches, axis=-1)
+    
+    return branch_layer
+        
+        
+def _build_explicit_model(inputs):
     conv1 = tf.layers.conv1d(
         inputs=inputs,
         filters=16,
         kernel_size=32,
+        strides=2,
         padding='same',
         activation=tf.nn.relu)
-    
-    pool1 = tf.layers.max_pooling1d(
-        inputs=conv1,
-        pool_size=2,
-        strides=2)
     
     conv2 = tf.layers.conv1d(
-        inputs=pool1,
+        inputs=conv1,
         filters=32,
-        kernel_size=32,
+        kernel_size=16,
+        strides=2,
         padding='same',
         activation=tf.nn.relu)
-    
-    pool2 = tf.layers.max_pooling1d(
-        inputs=conv2,
-        pool_size=2,
-        strides=2)
     
     conv3 = tf.layers.conv1d(
-        inputs=pool2,
+        inputs=conv2,
         filters=64,
-        kernel_size=32,
+        kernel_size=8,
+        strides=2,
         padding='same',
         activation=tf.nn.relu)
     
-    pool3 = tf.layers.max_pooling1d(
-        inputs=conv3,
-        pool_size=2,
-        strides=2)
-    
-    conv_flat = tf.contrib.layers.flatten(pool3)
+    conv_flat = tf.contrib.layers.flatten(conv3)
     
     dense1 = tf.layers.dense(
         inputs=conv_flat,
@@ -106,8 +121,16 @@ def _build_model(conv_layers=3, dense_layers=2):
         training=is_training)
     
     params = tf.layers.dense(inputs=dropout2, units=3)
-    '''
-    return (inputs, params)
+    
+    return params
+
+def _build_recursive_model(inputs, conv_layers=3, dense_layers=2):    
+    conv = __conv_layer(inputs, conv_layers)
+    conv_flat = tf.contrib.layers.flatten(conv)
+    dense = __dense_layer(conv_flat, dense_layers)
+    params = tf.layers.dense(inputs=dense, units=3)
+
+    return params
 
 
 def _build_loss(inputs, params):
@@ -136,10 +159,6 @@ def _waveform(phase, amplitude, frequency):
                 * tf.sin(x * frequency)
     
     return waveform
-
-def _weight_variable(shape):    
-    initial_vals = tf.truncated_normal(shape, stddev=0.1)
-    return tf.Variable(initial_vals)
 
 def __conv_layer(inputs, 
                  current_layer, 
@@ -190,8 +209,10 @@ def __dense_layer(inputs, current_layer,
     
     return dropout
 
+
 ### Putting things together
-inputs, params = _build_model(conv_layers=3, dense_layers=2)
+inputs = _build_inputs()
+params = _build_branch_model(inputs, branch_layers=2, dense_layers=2)
 loss, train_op = _build_loss(inputs, params)
     
 def train(sess, iterations=2000, log_every=50, save_every=100):
@@ -214,7 +235,7 @@ def train(sess, iterations=2000, log_every=50, save_every=100):
                     % (step + 1, iterations, 
                        sess.run(loss),
                        params[0], params[1], params[2]))
-        if step % save_every == 0:
+        if step % save_every == 0 and step != 0:
             tf.logging.info("Saving model to %s" % ckpt_path)
             saver.save(sess, str(ckpt_path))
     
@@ -239,7 +260,7 @@ if __name__ == "__main__":
     test_waveform = data.generate_waveform(time=time, s_rate=s_rate)
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
-        train(sess, iterations=10, log_every=1, save_every=2)
+        train(sess, iterations=10, log_every=1, save_every=20)
         pred_params = predict(sess, test_waveform)
     
     print(pred_params)
