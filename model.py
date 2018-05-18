@@ -1,5 +1,5 @@
 '''
-Implements model for inferences
+Implements model for inferences (unsupervised)
 
 @author: William Tong (wlt2115@columbia.edu)
 '''
@@ -15,24 +15,25 @@ data = FakeData(freq=60,
                 amp=1,
                 phase=0)
 time = 5
-s_rate = 512
+s_rate = 2048
 
 is_training = False
-batch_size = 5
+batch_size = 32
 tf.logging.set_verbosity(tf.logging.INFO)
 
 # TODO wrap configurables in argparse
 # TODO implement with OOP principles
 # TODO logging + clean tests
 
-def _draw_data(batch_size=50):
+def _draw_data(batch_size=32):
     global data
     
     dataset = tf.data.Dataset.from_generator(
-        lambda: data.generator(time, s_rate), tf.float32)  
+        lambda: data.generator_unsupervised(time, s_rate), tf.float32)  
     dataset = dataset.batch(batch_size)
     
     return dataset.make_one_shot_iterator().get_next()
+
 
 def _build_inputs():
     global time, s_rate
