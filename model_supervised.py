@@ -1,5 +1,5 @@
 '''
-Implements model for inferences (supervised)
+Implements model_reg for inferences (supervised)
 
 @author: William Tong (wlt2115@columbia.edu)
 '''
@@ -11,7 +11,7 @@ import tensorflow as tf
 from noiserator import FakeData
 
 ### GLOBALS
-data = FakeData(freq=2,
+data = FakeData(freq=(0,6),
                 amp=1,
                 phase=0)
 time = 5
@@ -30,7 +30,6 @@ def _draw_data(batch_size=32):
     
     dataset = tf.data.Dataset.from_generator(
         generator=lambda: data.generator_supervised(
-            freq_range=(0, 6), 
             time=time, 
             s_rate=s_rate),
         output_types=(tf.float32, tf.int32),
@@ -131,7 +130,7 @@ def train(sess, iterations=2000, log_every=50, save_every=100):
     global loss, train_op, labels, is_training
     
     saver = tf.train.Saver()
-    ckpt_path = Path(r'save/model.ckpt')
+    ckpt_path = Path(r'save/model_reg.ckpt')
     if ((ckpt_path.parent / 'checkpoint').exists()):
         saver.restore(sess, str(ckpt_path))
         tf.logging.info("Model restored from %s" % ckpt_path)           
@@ -142,7 +141,7 @@ def train(sess, iterations=2000, log_every=50, save_every=100):
         if step % log_every == 0:
             _evaluate(sess, step, iterations, sess.run(loss)) 
         if step % save_every == 0 and step != 0:
-            tf.logging.info("Saving model to %s" % ckpt_path)
+            tf.logging.info("Saving model_reg to %s" % ckpt_path)
             saver.save(sess, str(ckpt_path))
     
     tf.logging.info("Performing final save to %s" % ckpt_path)
@@ -185,7 +184,7 @@ def predict(sess, waveforms=None, labels=None):
 
     
 if __name__ == "__main__":
-    test_waveform = data.generate_waveform(time=time, s_rate=s_rate)
+    test_waveform = data.generate_waveform(time=time, s_rate=s_rate, freq=3)
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
         train(sess, iterations=10, log_every=1, save_every=20)
