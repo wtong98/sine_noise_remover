@@ -166,7 +166,7 @@ class SineClassifyModel(Model):
                 phase = self.phase, amp = self.amp, freq_interval=self.freq,
                 time=self.time, s_rate=self.s_rate),
             output_types=(tf.float32, tf.float32),
-            output_shapes=(tf.TensorShape([self.time * self.s_rate, 1]), 
+            output_shapes=(tf.TensorShape([int(self.time * self.s_rate), 1]), 
                            tf.TensorShape([])))
         dataset = dataset.batch(self.batch_size)
         
@@ -176,7 +176,7 @@ class SineClassifyModel(Model):
         train_data, self.labels = self._draw_data()
         self.inputs = tf.placeholder_with_default(
             input=train_data,
-            shape=tf.TensorShape([None, self.time * self.s_rate, 1]))
+            shape=tf.TensorShape([None, int(self.time * self.s_rate), 1]))
     
     def _build_branch_model(self):
         branch = self._branch_layer(self.inputs, self.params['branch']['layers'])
@@ -191,7 +191,7 @@ class SineClassifyModel(Model):
             depth=self.num_classes)
         
         self.loss = tf.losses.softmax_cross_entropy(onehot_labels, self.logits)
-        optimizer = tf.train.AdamOptimizer(self.params['adam']['epsilon'])
+        optimizer = tf.train.AdamOptimizer(epsilon=self.params['adam']['epsilon'])
         self.train_op = optimizer.minimize(
             loss=self.loss,
             global_step=tf.train.get_global_step())
@@ -228,6 +228,9 @@ class SineClassifyModel(Model):
     
         if waveforms is None:
             waveforms, labels = self.sess.run(self._draw_data())
+        
+        if (len(waveforms.shape) < 3):
+            waveforms = np.expand_dims(waveforms, 0)
             
         pred_logits = self.sess.run(
                         self.logits, 
@@ -246,7 +249,8 @@ class SineRegModel(Model):
         self.time = time
         self.s_rate = s_rate
         
-        self.waveform = waveform[:self.time * self.s_rate].astype(np.float32)
+        # TODO pad waveform with zeros if too short (and throw warning when changing)
+        self.waveform = waveform[:int(self.time * self.s_rate)].astype(np.float32)
         self.freq_interval = freq_interval
     
     def _build_inputs(self):
@@ -255,7 +259,7 @@ class SineRegModel(Model):
 
         self.inputs = tf.placeholder_with_default(
             input=data.make_one_shot_iterator().get_next(),
-            shape=tf.TensorShape([None, self.time * self.s_rate, 1]))
+            shape=tf.TensorShape([None, int(self.time * self.s_rate), 1]))
     
     def _build_branch_model(self):
         branch = self._branch_layer(self.inputs, self.params['branch']['layers'])
@@ -279,7 +283,7 @@ class SineRegModel(Model):
                 + self._bound_loss(amp_est, (0., 99.)) \
                 + self._bound_loss(phase_est, (- np.pi, np.pi))
         
-        optimizer = tf.train.AdamOptimizer(self.params['adam']['epsilon'])
+        optimizer = tf.train.AdamOptimizer(epsilon=self.params['adam']['epsilon'])
         self.train_op = optimizer.minimize(
             loss=self.loss, 
             global_step=tf.train.get_global_step())
@@ -294,7 +298,7 @@ class SineRegModel(Model):
     def _waveform(self, phase, amplitude, frequency):
         x = tf.lin_space(start=0.0,
                         stop=2 * np.pi * self.time,
-                        num=self.s_rate * self.time) + phase
+                        num=int(self.time * self.s_rate)) + phase
         waveform = amplitude \
                     * tf.sin(x * frequency)
         
