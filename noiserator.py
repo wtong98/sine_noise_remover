@@ -5,8 +5,13 @@ Generates sine-wave cloaked in white noise
 '''
 
 import numpy as np    
-    
-def generator(phase, amp, freq_interval, time=1, s_rate=512):
+from typing import Iterable
+        
+def generator(phase: float, 
+              amp: float, 
+              freq_interval: tuple, 
+              time: float = 1, 
+              s_rate: int = 512) -> Iterable:
     lower, upper = freq_interval
     
     while True:
@@ -19,12 +24,16 @@ def generator(phase, amp, freq_interval, time=1, s_rate=512):
             rand_freq)
 
 
-def generate_waveform(phase, amp, freq,
-                      mean=0, sigma=0.25, 
-                      time=1, s_rate=512,
-                      reshape=True):
+def generate_waveform(phase: float, 
+                      amp: float, 
+                      freq: float,
+                      mean: float = 0, 
+                      sigma: float = 0.25,
+                      time: float = 1, 
+                      s_rate: int = 512,
+                      reshape: bool = True) -> np.ndarray:
     x = np.linspace(start=0, 
-                    stop=2 * np.pi * time, 
+                    stop=2 * np.pi * time,
                     num=s_rate * time,
                     endpoint=True) + phase
     waveform = amp \

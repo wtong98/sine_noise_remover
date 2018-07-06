@@ -1,16 +1,12 @@
 '''
-Grand implementation of two-pronged classification + regression model
+Grand implementation of regression model
 
 @author: William Tong (wlt2115@columbia.edu)
 '''
-
-from abc import ABC, abstractmethod
 from pathlib import Path
 
 import numpy as np
 import tensorflow as tf
-
-import noiserator
 
 default_params = {
     'batch_size': 16,
@@ -34,25 +30,101 @@ default_params = {
     }    
 }
 
-class Model(ABC):
+class SineRegModel:
     
-    @abstractmethod
-    def __init__(self, session, save_path,
-                 hyperparams=default_params):
+    def __init__(self, 
+                 session: tf.Session,
+                 time: float,
+                 s_rate: int,
+                 save_path: str = None,
+                 hyperparams: dict = default_params):
+        
         self.params=hyperparams
         
         self.sess = session
-        self.save_path = Path(save_path)
-        self.batch_size = self.params['batch_size']        
+        self.save_path = Path(save_path) if save_path is not None else None
+        self.batch_size = self.params['batch_size']    
         
         self.is_training = False
         self.saver = None
+        
+        # TODO: allow exploration in alternative frequencies (return list)
+        def get_freq(waveform: np.ndarray) -> float:
+            w = np.fft.fft(np.squeeze(waveform))
+            freqs = np.fft.fftfreq(len(waveform), d=1/s_rate)
+            
+            return freqs[np.argmax(abs(w))]            
+                
+        self.time = time
+        self.s_rate = s_rate
+        
+        self.freq = get_freq(self.waveform)
     
-    @abstractmethod
-    def _build_model(self):
+#     def _build_inputs(self) -> None:
+#         data = tf.data.Dataset.from_tensors(self.waveform)
+#         data = data.repeat().batch(1)
+# 
+#         self.inputs = tf.placeholder_with_default(
+#             input=data.make_one_shot_iterator().get_next(),
+#             shape=tf.TensorShape([None, int(self.time * self.s_rate), 1]))
+
+    def _build_inputs(self) -> None:
+        #data = tf.data.Dataset.from_generator(generator, output_types, output_shapes)
         pass
     
-    def _branch_layer(self, inputs, current_layer):
+    def _build_branch_model(self) -> None:
+        branch = self._branch_layer(self.inputs, 
+                                    self.params['branch']['layers'])
+        branch_flat = tf.contrib.layers.flatten(branch)
+        dense = self._dense_layer(branch_flat, 
+                                  self.params['dense']['layers'])
+        
+        self.estimates = tf.layers.dense(inputs=dense, units=2)
+    
+    def _build_loss(self) -> None:
+        phase_est = self.estimates[0,0]
+        amp_est = self.estimates[0,1]
+        
+        waveform_est = self._waveform(phase_est, amp_est, self.freq)
+        self.loss = tf.losses.mean_squared_error(
+                        labels=tf.reshape(self.inputs[0], [-1]),
+                        predictions=waveform_est) \
+                    + self._bound_loss(amp_est, (0., 99.)) \
+                    + self._bound_loss(phase_est, (- np.pi, np.pi))
+                    # TODO: improve bound-loss calculation
+
+        
+        optimizer = tf.train.AdamOptimizer(epsilon=self.params['adam']['epsilon'])
+        self.train_op = optimizer.minimize(
+            loss=self.loss, 
+            global_step=tf.train.get_global_step())
+    
+    def _bound_loss(self, center: float, interval: tuple) -> float:
+        difference = tf.sign(center - interval[0]) + tf.sign(center - interval[1])
+        mid = (interval[0] + interval[1]) / 2
+        bound_loss = difference ** 2 * (center - mid) ** 2
+        
+        return bound_loss
+        
+    def _waveform(self, 
+                  phase: float, 
+                  amplitude: float, 
+                  frequency: float) -> np.ndarray:
+        x = tf.lin_space(start=0.0,
+                        stop=2 * np.pi * self.time,
+                        num=int(self.time * self.s_rate)) + phase
+        waveform = amplitude * tf.sin(x * frequency)
+        
+        return waveform
+       
+    def _build_model(self) -> None:
+        self._build_inputs()
+        self._build_branch_model()
+        self._build_loss()
+    
+    def _branch_layer(self,
+                      inputs: tf.Tensor, 
+                      current_layer: int) -> tf.Tensor:
         start_size = self.params['branch']['start_size']
         scale_rate = self.params['branch']['scale_rate']
         kernel_sizes = self.params['branch']['kernel_sizes']
@@ -74,7 +146,9 @@ class Model(ABC):
         
         return branch_layer
     
-    def _dense_layer(self, inputs, current_layer):
+    def _dense_layer(self, 
+                     inputs: tf.Tensor, 
+                     current_layer: int) -> tf.Tensor:
         num_units = self.params['dense']['units']
         dropout_rate = self.params['dense']['dropout_rate']
     
@@ -95,15 +169,19 @@ class Model(ABC):
     
         return dropout
     
-    
-    def train(self, iterations, log_every=10, save_every=500, restore=True):        
+    def train(self, 
+              iterations: int, 
+              log_every: int = 10, 
+              save_every: int = 500) -> None:        
         self._build_model()
         self.sess.run(tf.global_variables_initializer())
         self.saver = tf.train.Saver()
         
-        ckpt_path = self.save_path / 'model.ckpt'
-        if (restore):
-            self._restore(ckpt_path)
+        # TODO: more elegant way to handle None string type
+        ckpt_path = None
+        if self.save_path is not None:
+            ckpt_path = self.save_path / 'model.ckpt'
+        self._restore(ckpt_path)
     
         for step in range(iterations):
             self.is_training = True
@@ -112,209 +190,35 @@ class Model(ABC):
             if step % log_every == 0:
                 tf.logging.info("Step %d of %d: loss = %.4f" % 
                     (step, iterations, self.sess.run(self.loss)))
-                print(self._prettyify(self.eval()))
-            if step % save_every == 0 and step != 0:
+                print(self.eval())
+            if self.save_path is not None \
+                and step % save_every == 0 \
+                and step != 0:
                 self._save(ckpt_path)
         
-        self._save(ckpt_path)    
+        self._save(ckpt_path)
         tf.logging.info('Done!')
     
-    def _restore(self, ckpt_path):
-        if (ckpt_path.parent.exists()):
-            self.saver.restore(self.sess, str(ckpt_path))
-            tf.logging.info("Model restored from %s" % ckpt_path)
-        else:
-            tf.logging.warn("Checkpoints not found at: %s, making new one" 
-                            % ckpt_path)
+    def _restore(self, ckpt_path: Path) -> None:
+        if self.save_path is not None:
+            if ckpt_path.parent.exists():
+                self.saver.restore(self.sess, str(ckpt_path))
+                tf.logging.info("Model restored from %s" % ckpt_path)
+            else:
+                tf.logging.warn("Checkpoints not found at: %s, making new one" 
+                                % ckpt_path)
     
-    def _save(self, ckpt_path):
-        tf.logging.info("Saving model to %s" % ckpt_path)
-        self.saver.save(self.sess, str(ckpt_path))
+    def _save(self, ckpt_path: Path) -> None:
+        if self.save_path is not None:
+            tf.logging.info("Saving model to %s" % ckpt_path)
+            self.saver.save(self.sess, str(ckpt_path))
         
-    @abstractmethod
     def eval(self) -> dict:
-        pass
-    
-    def _prettyify(self, eval_dict):
-        return str(eval_dict)
-    
-    @abstractmethod
-    def predict(self):
-        pass
-
-
-class SineClassifyModel(Model):
-    
-    def __init__(self, session, save_path,
-                 time, s_rate,
-                 phase, amp, freq,
-                 hyperparams=default_params):
-        super(SineClassifyModel, self).__init__(session, save_path, hyperparams)
-        
-        self.time = time
-        self.s_rate = s_rate
-        
-        self.phase = phase
-        self.amp = amp
-        self.freq = freq
-        
-        self.num_classes = freq[1] - freq[0] + 1
-        
-    def _draw_data(self):
-        dataset = tf.data.Dataset.from_generator(
-            generator=lambda: noiserator.generator(
-                phase = self.phase, amp = self.amp, freq_interval=self.freq,
-                time=self.time, s_rate=self.s_rate),
-            output_types=(tf.float32, tf.float32),
-            output_shapes=(tf.TensorShape([int(self.time * self.s_rate), 1]), 
-                           tf.TensorShape([])))
-        dataset = dataset.batch(self.batch_size)
-        
-        return dataset.make_one_shot_iterator().get_next()
-    
-    def _build_inputs(self):
-        train_data, self.labels = self._draw_data()
-        self.inputs = tf.placeholder_with_default(
-            input=train_data,
-            shape=tf.TensorShape([None, int(self.time * self.s_rate), 1]))
-    
-    def _build_branch_model(self):
-        branch = self._branch_layer(self.inputs, self.params['branch']['layers'])
-        branch_flat = tf.contrib.layers.flatten(branch)
-        dense = self._dense_layer(branch_flat, self.params['dense']['layers'])
-        
-        self.logits = tf.layers.dense(inputs=dense, units=self.num_classes)    
-    
-    def _build_loss(self):
-        onehot_labels = tf.one_hot(
-            indices=tf.cast(tf.round(self.labels - self.freq[0]), tf.int32),
-            depth=self.num_classes)
-        
-        self.loss = tf.losses.softmax_cross_entropy(onehot_labels, self.logits)
-        optimizer = tf.train.AdamOptimizer(epsilon=self.params['adam']['epsilon'])
-        self.train_op = optimizer.minimize(
-            loss=self.loss,
-            global_step=tf.train.get_global_step())
-    
-    def _build_model(self):
-        self._build_inputs()
-        self._build_branch_model()
-        self._build_loss()
-    
-    def eval(self):
-        self.is_training = False
-        pred_logits, labs = self.predict()
-    
-        guesses = np.argmax(pred_logits, axis=1) + self.freq[0]
-        assert(len(guesses) == len(labs))
-            
-        total = len(guesses)
-        labs_int = np.round(labs)
-        correct = [1 for i in range(total) if guesses[i] == labs_int[i]]    
-        accuracy= np.sum(correct) / total
-        
-        return {'predictions': guesses, 'actual': labs, 'accuracy': accuracy}
-    
-    def _prettyify(self, info_dict):
-        info_tuple = (info_dict['predictions'], 
-                      info_dict['actual'], 
-                      info_dict['accuracy'])
-        output ="predictions:\t%s\nactual:\t%s\naccuracy: %.4f\n" % info_tuple
-
-        return output
-    
-    def predict(self, waveforms=None, labels=None):
-        self.is_training = False
-    
-        if waveforms is None:
-            waveforms, labels = self.sess.run(self._draw_data())
-        
-        if (len(waveforms.shape) < 3):
-            waveforms = np.expand_dims(waveforms, 0)
-            
-        pred_logits = self.sess.run(
-                        self.logits, 
-                        feed_dict={self.inputs: waveforms})        
-        return (pred_logits, labels)
-    
-
-class SineRegModel(Model):
-    
-    def __init__(self, session, save_path,
-                 waveform, freq_interval,
-                 time, s_rate,
-                 hyperparams=default_params):
-        super(SineRegModel, self).__init__(session, save_path, hyperparams)
-                
-        self.time = time
-        self.s_rate = s_rate
-        
-        # TODO pad waveform with zeros if too short (and throw warning when changing)
-        self.waveform = waveform[:int(self.time * self.s_rate)].astype(np.float32)
-        self.freq_interval = freq_interval
-    
-    def _build_inputs(self):
-        data = tf.data.Dataset.from_tensors(self.waveform)
-        data = data.repeat().batch(1)
-
-        self.inputs = tf.placeholder_with_default(
-            input=data.make_one_shot_iterator().get_next(),
-            shape=tf.TensorShape([None, int(self.time * self.s_rate), 1]))
-    
-    def _build_branch_model(self):
-        branch = self._branch_layer(self.inputs, self.params['branch']['layers'])
-        branch_flat = tf.contrib.layers.flatten(branch)
-        dense = self._dense_layer(branch_flat, self.params['dense']['layers'])
-        
-        self.estimates = tf.layers.dense(inputs=dense, units=3)
-    
-    def _build_loss(self):
-        phase_est = self.estimates[0,0]
-        amp_est = self.estimates[0,1]
-        freq_est = self.estimates[0,2]
-        
-        waveform_est = self._waveform(phase_est, amp_est, freq_est)
-        self.loss = tf.losses.mean_squared_error(
-                    labels=tf.reshape(self.inputs[0], [-1]),
-                    predictions=waveform_est) \
-                + self._bound_loss(freq_est, (
-                    self.freq_interval[0], 
-                    self.freq_interval[1])) \
-                + self._bound_loss(amp_est, (0., 99.)) \
-                + self._bound_loss(phase_est, (- np.pi, np.pi))
-        
-        optimizer = tf.train.AdamOptimizer(epsilon=self.params['adam']['epsilon'])
-        self.train_op = optimizer.minimize(
-            loss=self.loss, 
-            global_step=tf.train.get_global_step())
-    
-    def _bound_loss(self, val, interval):
-        difference = tf.sign(val - interval[0]) + tf.sign(val - interval[1])
-        center = (interval[0] + interval[1]) / 2
-        bound_loss = difference ** 2 * (val - center) ** 2
-        
-        return bound_loss    
-        
-    def _waveform(self, phase, amplitude, frequency):
-        x = tf.lin_space(start=0.0,
-                        stop=2 * np.pi * self.time,
-                        num=int(self.time * self.s_rate)) + phase
-        waveform = amplitude \
-                    * tf.sin(x * frequency)
-        
-        return waveform
-       
-    def _build_model(self):
-        self._build_inputs()
-        self._build_branch_model()
-        self._build_loss()
-        
-    def eval(self):
         self.is_training = False
         est = self.sess.run(self.estimates).flatten()   
-        return {'phase' : est[0], 'amp' : est[1], 'freq' : est[2]}  
+        return {'phase' : est[0], 'amp' : est[1], 'freq' : self.freq}  
         
-    def predict(self):
+    def predict(self) -> dict:
         self.is_training = False
         return self.eval()
 
